@@ -16,6 +16,7 @@ in
     jq        # json on the command line
     lazygit
     neovim
+    nodejs    # node runtime for the already npm-installed `pi` (see README's Pi section)
     # the font everything renders in
     nerd-fonts.hack
   ];
