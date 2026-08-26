@@ -14,6 +14,7 @@ in
     fd        # fast find
     fzf       # fuzzy finder
     jq        # json on the command line
+    gh        # GitHub CLI
     lazygit
     neovim
     # the font everything renders in
