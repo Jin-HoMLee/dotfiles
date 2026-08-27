@@ -34,6 +34,19 @@
     onActivation.cleanup = "zap";  # remove anything not listed here
     onActivation.autoUpdate = true;
     onActivation.extraFlags = [ "--force" ];
+    # Homebrew 6.0.0 requires interactive `brew trust` for non-official taps
+    # (like kunchenguid/tap below) before it will load their casks/formulae -
+    # including inside the internal `brew cleanup` subprocess that `--force-cleanup`
+    # spawns, which isn't reachable by an interactive trust grant at all under
+    # sudo-driven activation. Taps only reach the Brewfile via a reviewed commit
+    # to this file, so Homebrew's own interactive re-confirmation on top of that
+    # is redundant here.
+    onActivation.extraEnv = {
+      HOMEBREW_NO_REQUIRE_TAP_TRUST = "1";
+    };
+    taps = [
+      "kunchenguid/tap"
+    ];
     brews = [
       "herdr"
     ];
@@ -41,6 +54,7 @@
       "wezterm"
       "claude-code"
       "opensuperwhisper"
+      "baby-menu"
     ];
   };
 }
