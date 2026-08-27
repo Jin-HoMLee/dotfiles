@@ -25,7 +25,7 @@ Running the switch builds:
 
 - System settings (dark mode, key repeat, dock, Finder, trackpad)
 - Homebrew apps (casks and CLI tools)
-- Nix user packages (ripgrep, fd, fzf, jq, gh, lazygit, Neovim, Hack Nerd Font)
+- Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font)
 - Shell (zsh, aliases, starship prompt)
 - Editor (Neovim config with the rose-pine moon theme)
 - Terminal (WezTerm config with the rose-pine moon theme and dimmed unfocused windows)
