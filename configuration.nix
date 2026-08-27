@@ -53,6 +53,7 @@
     casks = [
       "wezterm"
       "claude-code"
+      "codex"
       "opensuperwhisper"
       "baby-menu"
     ];
