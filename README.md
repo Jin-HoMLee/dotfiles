@@ -24,7 +24,7 @@ If you find a bug, please open a GitHub Issue using the bug report template.
 Running the switch builds:
 
 - System settings (dark mode, key repeat, dock, Finder, trackpad)
-- Homebrew apps (casks and CLI tools)
+- Homebrew apps (casks and CLI tools), including Atomic Vault.app and its vendor CLI
 - Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font, Grok CLI)
 - Shell (zsh, aliases, starship prompt)
 - Editor (Neovim config with the rose-pine moon theme)
@@ -87,6 +87,38 @@ Edit the config files in place, then apply:
 
 That's it.
 No separate build-and-copy step.
+
+### Atomic Vault CLI
+
+`configuration.nix` declares the vendor's `automic-vault/isotopes` tap and
+`automic-vault` cask. The cask installs `Atomic Vault.app`; its supported
+`install-av-cli.command` installer installs the bundled, signed `av` binary at
+`/usr/local/bin/av`. It needs administrator authorization to write that system
+path, but performs no interactive Vault enrollment and handles no secret values.
+
+The post-activation check runs after Homebrew and is deliberately fail-closed:
+it leaves an existing `/usr/local/bin/av` untouched when it matches the app
+byte-for-byte and is root-owned with mode 755, installs it with the vendor
+installer only when it is absent, and refuses to replace an unrelated file or
+symlink. This keeps a manually installed CLI safe until the declared app CLI
+has been verified. The current CLI can be checked without exposing secrets:
+
+```sh
+av --version
+av doctor
+```
+
+On a fresh machine, apply the configuration with `./rebuild.sh`, then launch the
+menu-bar app once before using operations that require approval:
+
+```sh
+open /Applications/Automic\ Vault.app
+```
+
+If an existing CLI differs after an app update, activation stops without
+changing it. Review the difference and deliberately run the vendor installer
+at `/Applications/Automic Vault.app/Contents/Resources/install-av-cli.command`
+before applying again. No credentials or secret values belong in this repo.
 
 ## Make it yours
 
