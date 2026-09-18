@@ -1,7 +1,14 @@
-{ config, pkgs, user, ... }:
+{ config, pkgs, user, nixpkgs-unstable, ... }:
 
 let
   dotfiles = "${config.home.homeDirectory}/.dotfiles";
+  # 26.05 has no grok-build at all; the flake's unstable input carries it.
+  # The separate instance needs configuration.nix's nixpkgs policy because the
+  # package is unfree (`unfreeRedistributable`).
+  unstable = import nixpkgs-unstable {
+    system = pkgs.stdenv.hostPlatform.system;
+    inherit (pkgs) config;
+  };
 in
 
 {
@@ -20,6 +27,8 @@ in
     nodejs    # node runtime for the already npm-installed `pi` (see README's Pi section)
     # the font everything renders in
     nerd-fonts.hack
+    # Grok CLI (xAI's coding agent), from the nixpkgs-unstable input in flake.nix
+    unstable.grok-build
   ];
   fonts.fontconfig.enable = true;
   home.sessionVariables.EDITOR = "nvim";
