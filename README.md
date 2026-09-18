@@ -25,7 +25,7 @@ Running the switch builds:
 
 - System settings (dark mode, key repeat, dock, Finder, trackpad)
 - Homebrew apps (casks and CLI tools)
-- Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font)
+- Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font, Grok CLI)
 - Shell (zsh, aliases, starship prompt)
 - Editor (Neovim config with the rose-pine moon theme)
 - Terminal (WezTerm config with the rose-pine moon theme and dimmed unfocused windows)
@@ -133,6 +133,8 @@ If you don't use it, just remove it from `brews` in your copy.
 
 - `flake.nix` - the entry point.
   Wires up nixpkgs, nix-darwin, home-manager, and nix-homebrew, and declares the `mac` machine.
+  It also tracks `nixpkgs-unstable` as a second, narrowly used input: `home.nix` takes `grok-build` from it because 26.05 does not carry it.
+  That package is unfree, so the unstable instance is imported with the same nixpkgs policy as the rest of the config.
 - `configuration.nix` - system-level config: macOS defaults, Homebrew.
 - `home.nix` - user-level config: shell, packages, prompt, and the symlinks described below.
 - `rebuild.sh` - re-applies the config after the first switch.
