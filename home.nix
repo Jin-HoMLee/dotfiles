@@ -12,6 +12,8 @@ let
 in
 
 {
+  imports = [ ./home-manager/common.nix ];
+
   home.username = user;
   home.homeDirectory = "/Users/${user}";
   home.stateVersion = "24.11";
