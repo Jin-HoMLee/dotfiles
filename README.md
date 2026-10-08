@@ -25,7 +25,7 @@ Running the switch builds:
 
 - System settings (dark mode, key repeat, dock, Finder, trackpad)
 - Homebrew apps (casks and CLI tools), including Atomic Vault.app and its vendor CLI
-- Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font, Grok CLI)
+- Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font, Grok CLI, and a Pi Node-runtime launcher)
 - Shell (zsh, aliases, starship prompt)
 - Editor (Neovim config with the rose-pine moon theme)
 - Terminal (WezTerm config with the rose-pine moon theme and dimmed unfocused windows)
@@ -186,6 +186,18 @@ Pi is an opt-in CLI, not a dependency this repository vendors. Install it from i
 ```sh
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 ```
+
+The Home Manager package list keeps the normal Nix `nodejs` runtime for other
+consumers, but provides a `pi` shim that runs this npm-installed executable
+with the corrected Node 24 supplied by the locked `nixpkgs-unstable` input
+(currently Node 24.20.0). The primary input's Node 24.16.0 combines the
+worker-thread regression with its Darwin libc++/dynamic-libuv build, producing
+unmanaged-file-descriptor warnings during synchronous worker I/O. This avoids
+that regression without changing Pi's command, extension discovery, or package
+loading. The shim takes effect only after
+activating Home Manager (for example, with `./rebuild.sh`); before activation,
+`pi` still uses whichever `node` appears first on the existing PATH. The
+npm-installed Pi executable must remain discoverable on PATH after activation.
 
 [Pi Launcher](https://github.com/kunchenguid/homebrew-tap) is also optional and installed from its owner, not declared by this config:
 

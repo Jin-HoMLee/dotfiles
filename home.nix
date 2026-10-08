@@ -9,6 +9,28 @@ let
     system = pkgs.stdenv.hostPlatform.system;
     inherit (pkgs) config;
   };
+  # Pi is installed globally by npm, but Node 24.16.0 from the primary input
+  # has a Darwin worker-thread fd-tracking regression. Keep the normal nodejs
+  # package for other consumers and run only Pi with the corrected unstable Node.
+  piLauncher = pkgs.writeShellScriptBin "pi" ''
+    set -eu
+    pi_path=
+    old_ifs=$IFS
+    IFS=:
+    for directory in $PATH; do
+      candidate="$directory/pi"
+      if [ -x "$candidate" ] && [ "$candidate" != "$0" ]; then
+        pi_path="$candidate"
+        break
+      fi
+    done
+    IFS=$old_ifs
+    if [ -z "$pi_path" ]; then
+      echo "pi: the npm-installed Pi executable was not found on PATH" >&2
+      exit 127
+    fi
+    exec env PATH="${unstable.nodejs}/bin:$PATH" "$pi_path" "$@"
+  '';
 in
 
 {
@@ -26,7 +48,8 @@ in
     gh        # GitHub CLI
     lazygit
     neovim
-    nodejs    # node runtime for the already npm-installed `pi` (see README's Pi section)
+    nodejs    # default Node runtime for non-Pi consumers
+    piLauncher # run the npm-installed `pi` with corrected Node 24 (see README)
     # the font everything renders in
     nerd-fonts.hack
     # Grok CLI (xAI's coding agent), from the nixpkgs-unstable input in flake.nix
