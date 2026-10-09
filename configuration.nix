@@ -58,7 +58,7 @@
       "wezterm"
       "claude-code"
       "codex"
-      "opensuperwhisper"
+      "handy"
       "baby-menu"
       "automic-vault/isotopes/automic-vault"
     ];
