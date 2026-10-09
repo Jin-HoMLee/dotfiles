@@ -194,10 +194,13 @@ with the corrected Node 24 supplied by the locked `nixpkgs-unstable` input
 worker-thread regression with its Darwin libc++/dynamic-libuv build, producing
 unmanaged-file-descriptor warnings during synchronous worker I/O. This avoids
 that regression without changing Pi's command, extension discovery, or package
-loading. The shim takes effect only after
-activating Home Manager (for example, with `./rebuild.sh`); before activation,
-`pi` still uses whichever `node` appears first on the existing PATH. The
-npm-installed Pi executable must remain discoverable on PATH after activation.
+loading. Home Manager also prepends its per-user profile in session variables
+and reasserts that ordering in zsh after macOS's `/etc/zshrc` prepends
+Homebrew. Therefore, after activating Home Manager (for example, with
+`./rebuild.sh`), new login shells and workers inherited from them resolve the
+corrected launcher even when `/opt/homebrew/bin` comes first in the baseline
+PATH. The npm-installed Pi executable remains discoverable through that
+launcher.
 
 [Pi Launcher](https://github.com/kunchenguid/homebrew-tap) is also optional and installed from its owner, not declared by this config:
 

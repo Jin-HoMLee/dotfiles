@@ -12,25 +12,12 @@ let
   # Pi is installed globally by npm, but Node 24.16.0 from the primary input
   # has a Darwin worker-thread fd-tracking regression. Keep the normal nodejs
   # package for other consumers and run only Pi with the corrected unstable Node.
-  piLauncher = pkgs.writeShellScriptBin "pi" ''
-    set -eu
-    pi_path=
-    old_ifs=$IFS
-    IFS=:
-    for directory in $PATH; do
-      candidate="$directory/pi"
-      if [ -x "$candidate" ] && [ "$candidate" != "$0" ]; then
-        pi_path="$candidate"
-        break
-      fi
-    done
-    IFS=$old_ifs
-    if [ -z "$pi_path" ]; then
-      echo "pi: the npm-installed Pi executable was not found on PATH" >&2
-      exit 127
-    fi
-    exec env PATH="${unstable.nodejs}/bin:$PATH" "$pi_path" "$@"
-  '';
+  piLauncher = pkgs.writeShellScriptBin "pi" (
+    builtins.replaceStrings
+      [ "@UNSTABLE_NODE_BIN@" ]
+      [ "${unstable.nodejs}/bin" ]
+      (builtins.readFile ./home/pi-launcher.sh)
+  );
 in
 
 {
@@ -57,6 +44,10 @@ in
   ];
   fonts.fontconfig.enable = true;
   home.sessionVariables.EDITOR = "nvim";
+  # Homebrew's /etc/zshrc prepends its bin directories after zshenv has
+  # loaded Home Manager's session variables. Keep the profile first so the
+  # corrected Pi launcher wins in fresh login shells and inherited workers.
+  home.sessionPath = [ "${config.home.profileDirectory}/bin" ];
 
   programs.zsh = {
     enable = true;
@@ -64,6 +55,9 @@ in
     syntaxHighlighting.enable = true;  # commands turn green when valid
     initContent = ''
       bindkey '^f' autosuggest-accept
+      # macOS /etc/zshrc runs `brew shellenv` after zshenv, so reassert the
+      # Home Manager profile after Homebrew has prepended its directories.
+      path=("${config.home.profileDirectory}/bin" $path)
     '';
     shellAliases = {
       ".." = "cd ..";
