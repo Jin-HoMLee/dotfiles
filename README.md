@@ -30,7 +30,7 @@ Running the switch builds:
 - Editor (Neovim config with the rose-pine moon theme)
 - Terminal (WezTerm config with the rose-pine moon theme and dimmed unfocused windows)
 - Agent configs (Claude, Codex, opencode all share one AGENTS.md)
-- Optional Pi theme and local extensions, generic UI settings and model overrides, plus two deliberately pinned third-party Pi packages
+- Optional Pi theme and local extensions, generic UI settings and model overrides, plus three deliberately pinned third-party Pi packages
 
 ## Prerequisites
 
@@ -218,14 +218,15 @@ When enabled, Calm hides collapsed thinking and the call/result shells for Pi's 
 
 Calm never changes prompts, tool execution, model context, session data, or ordering. `/share` and `/export` use the complete stock transcript. Generic custom tools, images, and unsupported Pi transcript classes deliberately remain visible because Pi has no safe general-purpose transcript filter. If a future Pi release no longer exports the exact collapsed-thinking rendering seam, Calm logs one diagnostic and leaves only that adapter disabled; all other behavior remains available.
 
-Pi's package system declares two third-party sources in the linked global `settings.json`:
+Pi's package system declares three third-party sources in the linked global `settings.json`:
 
 - `npm:pi-web-access@0.14.0` - the exact public npm release for web access.
 - `npm:@ryan_nookpi/pi-extension-codex-fast-mode@0.2.6` - the exact public npm release from `ryan_nookpi`.
+- `npm:compact-adviser@0.1.12` - the exact public npm release from `kunchenguid` for Pi compaction advice.
 
 The versions are immutable pins, so Pi does not move them during package updates. Deliberate updates require a new source and security audit, followed by an explicit pin change in `home/.pi/agent/settings.json`. On Pi 0.82.0, global settings declarations install missing pinned packages automatically at startup. No one-time install command is required. Pi keeps the downloaded npm package trees in its own unmanaged `~/.pi/agent/npm` runtime directory, outside Home Manager and Git tracking.
 
-Both packages execute with your full user permissions and must be trusted like any other executable code.
+All three packages execute with your full user permissions and must be trusted like any other executable code.
 
 Home Manager deliberately does not manage `~/.pi/agent` itself, or Pi authentication, sessions, trust decisions, caches, npm/git package trees, or any other runtime state. The model overrides contain no credentials or endpoint settings, do not choose a default model, and only take effect after you authenticate Pi yourself. This remains an additive post-video layer: it does not install Pi, a launcher, or package source code into this repository.
 
