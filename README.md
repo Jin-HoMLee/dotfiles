@@ -25,7 +25,7 @@ Running the switch builds:
 
 - System settings (dark mode, key repeat, dock, Finder, trackpad)
 - Homebrew apps (casks and CLI tools), including Handy, Atomic Vault.app, and its vendor CLI
-- Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font, Grok CLI, and a Pi Node-runtime launcher)
+- Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font, Grok CLI, a Pi Node-runtime launcher, and a pinned OpenCode 1.x)
 - Shell (zsh, aliases, starship prompt)
 - Editor (Neovim config with the rose-pine moon theme)
 - Terminal (WezTerm config with the rose-pine moon theme and dimmed unfocused windows)
@@ -229,6 +229,31 @@ The versions are immutable pins, so Pi does not move them during package updates
 All three packages execute with your full user permissions and must be trusted like any other executable code.
 
 Home Manager deliberately does not manage `~/.pi/agent` itself, or Pi authentication, sessions, trust decisions, caches, npm/git package trees, or any other runtime state. The model overrides contain no credentials or endpoint settings, do not choose a default model, and only take effect after you authenticate Pi yourself. This remains an additive post-video layer: it does not install Pi, a launcher, or package source code into this repository.
+
+## OpenCode (Firstmate adapter pin)
+
+OpenCode is installed as a Nix package so a rebuild reproduces the exact
+version Firstmate's adapter was verified against. The pin is `1.18.32` and
+deliberately stays on the 1.x line: OpenCode 2.0 removed the interactive
+`opencode --model` flag the adapter drives, so a 2.x upgrade would silently
+break it.
+
+`home.nix` fetches the vendor's official Darwin arm64 release binary for
+`v1.18.32` (OpenCode's npm package is a thin installer around the same
+self-contained binary) and wraps it with `OPENCODE_DISABLE_AUTOUPDATE=true`.
+That gate, together with `autoupdate: false` in the user's own
+`~/.config/opencode/opencode.json`, keeps the compatibility pin from moving
+on its own. Home Manager only owns the `opencode` package and the shared
+`~/.config/opencode/AGENTS.md` symlink; it does not manage `opencode.json`,
+so the existing Marginalia MCP server and instructions there are preserved.
+
+After a rebuild, `opencode` is on `PATH` for login shells and the workers they
+spawn. Verify the pin and its free model catalog with:
+
+```sh
+opencode --version                       # 1.18.32
+opencode models | grep -E 'deepseek-v4.1-flash-free|glm-5.3-flash-free'
+```
 
 ## Notes
 
