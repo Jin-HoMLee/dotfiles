@@ -9,13 +9,53 @@ let
     system = pkgs.stdenv.hostPlatform.system;
     inherit (pkgs) config;
   };
-  # Pi is installed globally by npm, but Node 24.16.0 from the primary input
-  # has a Darwin worker-thread fd-tracking regression. Keep the normal nodejs
-  # package for other consumers and run only Pi with the corrected unstable Node.
+  # Pi is pinned the Nix way, like OpenCode below: an exact npm release plus a
+  # content-addressed npm tarball, and a vendored lockfile so the dependency
+  # tree stays fixed (the tarball ships no lockfile). The published artifact is
+  # a bundled CLI under dist/bundle/cli.js that lazily resolves a few runtime
+  # packages (quickjs-wasi, photon-node, ...) from its node_modules, so build it
+  # through buildNpmPackage instead of copying OpenCode's fetchurl zip verbatim.
+  pi = pkgs.buildNpmPackage {
+    pname = "pi-coding-agent";
+    version = "1.1.0";
+
+    src = pkgs.fetchurl {
+      url = "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.1.0.tgz";
+      hash = "sha512-SeEi/4hdcHNgA9UWlefZl7ZZpm3dzi2OoxNjDHsBJ9o298LNOtbL4DGKgitlEj6uCTccvtw6f2hlCkTPVJ2RXg==";
+    };
+
+    # The npm tarball ships the built dist/ and no lockfile; vendor the
+    # resolved lockfile so npmDepsHash stays fixed instead of floating with
+    # npm's latest matching releases.
+    postPatch = ''
+      cp ${./home/pi-coding-agent-package-lock.json} package-lock.json
+    '';
+
+    npmDepsHash = "sha256-qC89OCkQ2iJXnsxVAUiDZ10VSVEagpotmekn8iPSX3Y=";
+
+    # dist/ is prebuilt; there is no build script to run.
+    dontNpmBuild = true;
+
+    meta = with pkgs.lib; {
+      description = "AI coding agent CLI (pinned 1.1.0)";
+      homepage = "https://pi.dev";
+      license = licenses.mit;
+      platforms = platforms.darwin;
+      mainProgram = "pi";
+    };
+  };
+
+  # Run the pinned Pi under the corrected Node: Node 24.16.0 from the primary
+  # input has a Darwin worker-thread fd-tracking regression, so keep the normal
+  # nodejs package for other consumers and run only Pi with the corrected
+  # unstable Node, exec'ing the pinned store-path bundle directly.
   piLauncher = pkgs.writeShellScriptBin "pi" (
     builtins.replaceStrings
-      [ "@UNSTABLE_NODE_BIN@" ]
-      [ "${unstable.nodejs}/bin" ]
+      [ "@UNSTABLE_NODE_BIN@" "@PI_CLI@" ]
+      [
+        "${unstable.nodejs}/bin"
+        "${pi}/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+      ]
       (builtins.readFile ./home/pi-launcher.sh)
   );
   # OpenCode is the coding agent Firstmate's adapter drives through the
@@ -78,7 +118,7 @@ in
     lazygit
     neovim
     nodejs    # default Node runtime for non-Pi consumers
-    piLauncher # run the npm-installed `pi` with corrected Node 24 (see README)
+    piLauncher # run the pinned `pi` (1.1.0) with corrected Node 24 (see README)
     opencode   # pinned OpenCode 1.18.32 for Firstmate's adapter (see README)
     # the font everything renders in
     nerd-fonts.hack
