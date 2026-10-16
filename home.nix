@@ -18,6 +18,48 @@ let
       [ "${unstable.nodejs}/bin" ]
       (builtins.readFile ./home/pi-launcher.sh)
   );
+  # OpenCode is the coding agent Firstmate's adapter drives through the
+  # interactive `opencode --model` flag. OpenCode 2.0 removed that flag, so the
+  # compatible line is 1.x: pin the exact 1.18.32 release the adapter was
+  # verified against, and wrap it with OpenCode's auto-update gate so the pin
+  # cannot silently move. The vendor ships a self-contained binary per platform
+  # (its npm package is a thin installer around it), so fetch the official
+  # Darwin arm64 release instead of building through the bun toolchain.
+  opencode = pkgs.stdenv.mkDerivation {
+    pname = "opencode";
+    version = "1.18.32";
+
+    src = pkgs.fetchurl {
+      url = "https://github.com/anomalyco/opencode/releases/download/v1.18.32/opencode-darwin-arm64.zip";
+      hash = "sha256-+mQ/k0AcE1CNjVE3gOVM6cwBID1QERS+m4jWJAi4EB8=";
+    };
+
+    nativeBuildInputs = [ pkgs.unzip pkgs.makeWrapper ];
+
+    dontUnpack = true;
+    dontStrip = true;
+
+    installPhase = ''
+      runHook preInstall
+      mkdir -p "$out/bin"
+      unzip -q "$src" -d "$out/bin"
+      chmod +x "$out/bin/opencode"
+      # /usr/sbin carries `sysctl`, which OpenCode reads for machine metadata on
+      # macOS and which a minimal inherited worker PATH can omit.
+      wrapProgram "$out/bin/opencode" \
+        --prefix PATH : /usr/sbin \
+        --set OPENCODE_DISABLE_AUTOUPDATE true
+      runHook postInstall
+    '';
+
+    meta = with pkgs.lib; {
+      description = "AI coding agent built for the terminal (pinned 1.x for Firstmate's adapter)";
+      homepage = "https://opencode.ai";
+      license = licenses.mit;
+      platforms = [ "aarch64-darwin" ];
+      mainProgram = "opencode";
+    };
+  };
 in
 
 {
@@ -37,6 +79,7 @@ in
     neovim
     nodejs    # default Node runtime for non-Pi consumers
     piLauncher # run the npm-installed `pi` with corrected Node 24 (see README)
+    opencode   # pinned OpenCode 1.18.32 for Firstmate's adapter (see README)
     # the font everything renders in
     nerd-fonts.hack
     # Grok CLI (xAI's coding agent), from the nixpkgs-unstable input in flake.nix
