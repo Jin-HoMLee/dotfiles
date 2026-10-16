@@ -25,7 +25,7 @@ Running the switch builds:
 
 - System settings (dark mode, key repeat, dock, Finder, trackpad)
 - Homebrew apps (casks and CLI tools), including Handy, Atomic Vault.app, and its vendor CLI
-- Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font, Grok CLI, a Pi Node-runtime launcher, and a pinned OpenCode 1.x)
+- Nix user packages (ripgrep, fd, fzf, jq, gh, nodejs, lazygit, Neovim, Hack Nerd Font, Grok CLI, a pinned Pi 1.1.0, and a pinned OpenCode 1.x)
 - Shell (zsh, aliases, starship prompt)
 - Editor (Neovim config with the rose-pine moon theme)
 - Terminal (WezTerm config with the rose-pine moon theme and dimmed unfocused windows)
@@ -179,28 +179,35 @@ The files under `home/` are the real files - editing them here is editing your l
 `home.nix` uses `mkOutOfStoreSymlink` to point paths like `~/.config/nvim` straight at `home/.config/nvim` in this repo, so the two never drift out of sync.
 You only run `./rebuild.sh` when you change something that isn't just a symlinked file, like a package list or a system default.
 
-## Optional Pi configuration
+## Pi
 
-Pi is an opt-in CLI, not a dependency this repository vendors. Install it from its owner with the [official Pi instructions](https://pi.dev), for example:
+Pi is pinned the same Nix way as OpenCode: the exact `1.1.0` release, fetched
+from npm as a content-addressed tarball and built through `buildNpmPackage`.
+The published npm artifact is a bundled CLI under `dist/bundle/cli.js` (not a
+single self-contained binary like OpenCode), so a vendored `package-lock.json`
+(`home/pi-coding-agent-package-lock.json`) and a fixed `npmDepsHash` keep the
+dependency tree reproducible. The bundled CLI lazily resolves a few runtime
+packages (quickjs-wasi, photon-node, and others) from its `node_modules`, so
+building through `buildNpmPackage` preserves them instead of copying OpenCode's
+`fetchurl` zip.
+
+A `pi` launcher (`home/pi-launcher.sh`) execs that pinned store-path bundle
+directly under the corrected Node 24 supplied by the locked `nixpkgs-unstable`
+input (currently Node 24.20.0). The primary input's Node 24.16.0 combines the
+worker-thread regression with its Darwin libc++/dynamic-libuv build, producing
+unmanaged-file-descriptor warnings during synchronous worker I/O. The launcher
+deliberately has no fallback that searches `PATH` for a floating `pi` install:
+the pin is the only source. Home Manager prepends its per-user profile in
+session variables and reasserts that ordering in zsh after macOS's `/etc/zshrc`
+prepends Homebrew, so after a rebuild new login shells and inherited workers
+resolve the launcher even when `/opt/homebrew/bin` comes first in the baseline
+PATH.
+
+Verify the pin after a rebuild:
 
 ```sh
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+pi --version   # 1.1.0
 ```
-
-The Home Manager package list keeps the normal Nix `nodejs` runtime for other
-consumers, but provides a `pi` shim that runs this npm-installed executable
-with the corrected Node 24 supplied by the locked `nixpkgs-unstable` input
-(currently Node 24.20.0). The primary input's Node 24.16.0 combines the
-worker-thread regression with its Darwin libc++/dynamic-libuv build, producing
-unmanaged-file-descriptor warnings during synchronous worker I/O. This avoids
-that regression without changing Pi's command, extension discovery, or package
-loading. Home Manager also prepends its per-user profile in session variables
-and reasserts that ordering in zsh after macOS's `/etc/zshrc` prepends
-Homebrew. Therefore, after activating Home Manager (for example, with
-`./rebuild.sh`), new login shells and workers inherited from them resolve the
-corrected launcher even when `/opt/homebrew/bin` comes first in the baseline
-PATH. The npm-installed Pi executable remains discoverable through that
-launcher.
 
 [Pi Launcher](https://github.com/kunchenguid/homebrew-tap) is also optional and installed from its owner, not declared by this config:
 
