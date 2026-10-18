@@ -122,6 +122,7 @@ in
     opencode   # pinned OpenCode 1.18.32 for Firstmate's adapter (see README)
     # the font everything renders in
     nerd-fonts.hack
+    ibm-plex
     # Grok CLI (xAI's coding agent), from the nixpkgs-unstable input in flake.nix
     unstable.grok-build
   ];
