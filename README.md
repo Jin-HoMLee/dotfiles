@@ -120,6 +120,16 @@ changing it. Review the difference and deliberately run the vendor installer
 at `/Applications/Automic Vault.app/Contents/Resources/install-av-cli.command`
 before applying again. No credentials or secret values belong in this repo.
 
+### Optional Telegram receiver
+
+For the existing approved Firstmate Telegram bot, an opt-in user LaunchAgent
+can run independently of a terminal, restart after process interruptions or
+login, and recover from recognized Vault-startup and transient network failures.
+Authentication, ownership and ambiguous sending
+stop for explicit reconciliation, including across logins. Nothing is enabled
+by default and no rebuild or version change is needed. See
+[activation, rollback and availability limits](docs/telegram-receiver.md).
+
 ## Make it yours
 
 This repo is mine.
