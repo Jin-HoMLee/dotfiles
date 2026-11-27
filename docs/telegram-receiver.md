@@ -14,39 +14,53 @@ companion invocations; the transport's existing user/bot lock still excludes
 other local receivers, including the old foreground receiver. A remote poller
 cannot be ruled out locally: establish exclusive bot ownership before starting.
 
-Only two exact, reviewed outcomes allow another automatic attempt:
+Automatic restart does not require manual rearming after an ordinary process
+interruption or logout/login:
 
-- Vault's approval service reports that its menu-bar app is not running. The
-  next attempt can connect after the app opens; this does not auto-open the app.
-- The preserved transport reports exhaustion of its three transient poll
-  failures. It already bounds those failures and send-rate-limit retries.
+- Vault's exact approval-service-not-running result allows the next attempt
+  after the menu-bar app opens; this does not auto-open the app.
+- The preserved transport's exhausted transient poll failures allow another
+  attempt. It already bounds those failures and send-rate-limit retries.
+- An abrupt child death without an application error result, a terminated
+  supervisor, or a stale in-progress attempt after a host restart allows the
+  next scheduled/login start. The existing journal, not a guessed success,
+  determines whether the resumed transport can send.
 
-All other outcomes stop until explicit local reconciliation: authentication,
-409 ownership conflicts, webhook presence, local consumer conflicts, approval
-changes, uncertain/rejected sending, unexpected exits, unknown errors, missing
-executables, or consent taking more than 60 seconds. A Vault denial is **not** a
-transient condition. No repeated approval requests follow a denial/timeout.
-The transport classifies API errors other than 401/403/409 as transient during
-polling, including malformed/unavailable responses; this companion does not
-claim to infer more precise network causes from that result.
+**Why interrupted sends stay safe:** the preserved transport commits a delivery
+as `sending` before making its API call. Its next startup, under the existing
+bot lock, changes interrupted `sending` records to `uncertain`. Its existing
+sender refuses an `uncertain` or `rejected` record before making another send.
+The companion does not clear that state, mark it sent, reset offsets or call
+resolve. Successful capture/collection can happen before the sender reaches the
+uncertain record; restart does not claim that any prior reply arrived. If the
+network is still down, transient retries can precede discovery of that record,
+but they cannot resend it. A previously committed `sent` result stays sent;
+existing correlations and offsets resume in the same home.
 
-Before attempting Vault injection, the companion durably creates
-`<FM_HOME>/state/telegram-receiver/halt.json`. Only a recognized safe retry clears
-it. Process crashes, host restarts and login do not clear it. This deliberately
-sacrifices unattended crash recovery when delivery outcome is unknown rather
-than potentially resending a reply. An interrupted send remains governed by the
-transport's journal recovery and explicit phone verification, never a replay or
-offset reset. Do not run this companion under another restart supervisor.
+Application-declared safety stops remain persistent across crashes and logins:
+authentication, 409 ownership conflicts, webhook presence, local consumer
+conflicts, approval changes, uncertain/rejected sending, unknown application
+errors, source drift, missing executables, unexpected output/normal return, or
+consent taking more than 60 seconds. The child durably records a known safety
+stop before returning its classification, so losing the parent after that
+point does not discard the decision. A Vault denial is **not** transient; no
+repeated approval requests follow a recorded denial/timeout. The transport
+classifies API errors other than 401/403/409 as transient during polling,
+including malformed/unavailable responses; this companion does not infer more
+precise network causes from that result.
 
-`last-stop.json` contains the latest completed stop time, fixed reason, numeric
-child exit and retry choice. `halt.json` contains the hard-stop reason (or the
-pre-attempt marker after a crash). Both are private 0600 files in a 0700 service
-directory. They contain no tokens, API URLs, message bodies, forwarded content,
-raw stderr or remote descriptions. Raw subprocess output is bounded in memory
-and discarded. Core dumps are disabled for the companion and inherited by its
-children. There is no growing log. The transport's regular local `status`
-command remains the source of capture/delivery counts; the companion does not
-read or alter that journal.
+`<FM_HOME>/state/telegram-receiver/attempt.json` is an in-progress diagnostic,
+not a restart veto. `halt.json` is created only for an actual safety stop and
+requires explicit reconciliation. `last-stop.json` contains the latest stop
+observation, fixed reason, numeric child exit when available and retry choice.
+A stale attempt records that the previous process was interrupted, not that it
+succeeded. Files are private 0600 in a 0700 service directory. They contain no
+tokens, API URLs, message bodies, forwarded content, raw stderr or remote
+descriptions. Raw subprocess output is bounded in memory and discarded. Core
+dumps are disabled for the companion and inherited by its children. There is no
+growing log. The transport's regular local `status` command remains the source
+of capture/delivery counts; the companion does not read or alter that journal.
+Do not run this companion under another restart supervisor.
 
 ### Temporary dependency, not source extraction
 
@@ -85,7 +99,7 @@ a temporary task copy that will be removed.
 ## Reviewed activation procedure (not run by tests)
 
 The supervisor performs these only after explicit persistent-service approval
-and after the current Vault blocker is cleared. First merge/copy the reviewed
+and with the Vault approval service available. First merge/copy the reviewed
 files to the stable Dotfiles location. Preserve unrelated local edits. Substitute
 actual stable absolute paths; the sample `FM_HOME` is the existing home, never a
 new home or a task directory. No token is passed in an argument.
@@ -152,11 +166,15 @@ To stop automatic attempts, remove **only this job** from the user's domain:
 launchctl bootout "gui/$(id -u)" "$PLIST"
 ```
 
-If it is running, stopping leaves a hard-stop marker. Wait for the exact job to
-exit; inspect `halt.json`, `last-stop.json`, local transport status and any
-relevant phone delivery before restarting. If it crashed before recording a
-stop, the pre-attempt marker means the outcome is unknown, not successful.
-For a resolved hard stop only, while the job and foreground receiver are both
+Bootout removes scheduling; stopping a running process by itself does not
+create a hard-stop marker. A later bootstrap/login resumes safely through the
+existing journal recovery without manual rearm. Wait for the exact job to exit
+before running any alternative receiver. A real uncertain send is still a hard
+stop requiring phone verification, not permission to replay it.
+
+If `halt.json` exists, inspect it, `last-stop.json`, local transport status and
+any relevant phone delivery. Resolve the concrete safety cause first. Only for
+that resolved hard stop, while the job and foreground receiver are both
 stopped, explicitly remove the companion marker, **not** transport state:
 
 ```sh
@@ -186,12 +204,17 @@ PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 tests/telegram-receiver.test.py
 ```
 
 The suite uses synthetic transport and Vault fixtures, temporary homes and
-private fake state only. It tests retry/recovery, persistent safety stops,
-unknown output redaction, source changes, duplicates, permissions, bounded
-startup, process termination and plist rendering. It never invokes real `av`,
-launchctl or Telegram. An optional `TELEGRAM_TRANSPORT_SOURCE=/absolute/path/to/
-fm-telegram.py` adds source-contract tests against the preserved implementation
-with mocked API/inbox and temporary journals, still no real secrets or network.
+private fake state only. It tests automatic crash/login recovery, persistent
+safety stops, unknown output redaction, source changes, duplicates, permissions,
+bounded startup, process termination and plist rendering. It never invokes
+real `av`, launchctl or Telegram. An optional
+`TELEGRAM_TRANSPORT_SOURCE=/absolute/path/to/fm-telegram.py` adds source-contract
+tests and full companion subprocess restart tests. These retain the verified
+preserved implementation with only mocked API/inbox/clock and temporary home
+I/O: idle crash then new capture, supervisor death then fresh startup, a ready
+reply sent once and not resent on another start, and a real send-path process
+kill followed by startup recovery to `uncertain` with exactly one send attempt
+and a persistent hard stop. No real secrets or network.
 No CI was added and no heavy build or tool upgrade is required. The existing
 PR-close workflow is the only existing GitHub workflow; its owner exemption is
 unchanged, and any hosted runner use is ephemeral, not a local upgrade.

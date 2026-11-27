@@ -92,6 +92,14 @@ def child(home, transport):
             reason = "transport_changed"
     except BaseException:
         reason = "unexpected_stop"
+    if reason != "network_unavailable":
+        # Persist a known safety stop here, before the parent can be killed
+        # between receiving the result and writing its own stop diagnostics.
+        try:
+            record(home / "state" / "telegram-receiver" / "halt.json", reason,
+                   automatic_retry=False)
+        except Exception:
+            pass  # The classified result still requires the parent to halt.
     print((RESULT + reason.encode()).decode(), file=sys.stderr, flush=True)
     return 0
 
@@ -123,6 +131,11 @@ def record(path, reason, **fields):
         stream.truncate()
         stream.flush()
         os.fsync(stream.fileno())
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def terminate(proc):
@@ -167,6 +180,11 @@ def collect(proc, startup_timeout=60):
     for reason in REASONS:
         if out == STARTED and err == RESULT + reason.encode() + b"\n" and code == 0:
             return reason, code
+    if not err and ((out == STARTED and code != 0) or (not out and code < 0)):
+        # An abrupt death is not an application-declared safety error. The
+        # preserved transport recovers sending -> uncertain before any cycle,
+        # then refuses that delivery; restarting never resets that journal.
+        return "process_interrupted", code
     return "unexpected_stop", code
 
 
@@ -184,11 +202,14 @@ def run(home, transport, av):
         except BlockingIOError:
             return 0
         halt = folder / "halt.json"
-        # A crash or stop during an attempt leaves this durable marker. Login
-        # and scheduled starts never silently clear a hard stop.
+        # Only an actual classified safety stop latches. A stale attempt after
+        # a crash/logout is diagnostic evidence, not a blanket restart veto.
         if halt.exists() or halt.is_symlink():
             return 0
-        record(halt, "interrupted_attempt_requires_review")
+        attempt = folder / "attempt.json"
+        if attempt.exists() or attempt.is_symlink():
+            record(folder / "last-stop.json", "previous_attempt_interrupted", automatic_retry=True)
+        record(attempt, "receiver_starting")
         proc = None
         reason, code = "startup_requires_review", None
         try:
@@ -203,7 +224,9 @@ def run(home, transport, av):
                 env=env, start_new_session=True)
             reason, code = collect(proc)
         except StopRequested:
-            reason = "operator_stop_requires_review"
+            # bootout stops scheduling; logout/login restarts this same job.
+            # Neither event is evidence of an auth or delivery safety failure.
+            reason = "process_interrupted"
         except ValueError as error:
             if str(error) == "transport_changed":
                 reason = "transport_changed"
@@ -214,12 +237,13 @@ def run(home, transport, av):
                 terminate(proc)
                 proc.stdout.close()
                 proc.stderr.close()
-        retry = reason in ("vault_not_ready", "network_unavailable")
-        record(folder / "last-stop.json", reason, child_exit=code, automatic_retry=retry)
-        if retry:
-            halt.unlink()
-        else:
+        retry = reason in ("vault_not_ready", "network_unavailable", "process_interrupted")
+        if not retry and not (halt.exists() or halt.is_symlink()):
             record(halt, reason, child_exit=code, automatic_retry=False)
+        # A child-written safety stop always wins over an interrupted parent.
+        retry = retry and not (halt.exists() or halt.is_symlink())
+        record(folder / "last-stop.json", reason, child_exit=code, automatic_retry=retry)
+        attempt.unlink()
         return 0
     finally:
         os.close(lock)

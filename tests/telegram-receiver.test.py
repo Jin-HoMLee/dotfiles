@@ -57,6 +57,67 @@ os.execv(sys.argv[4], sys.argv[4:])
 '''
 
 
+# Appended ONLY to a temporary copy of the byte-verified preserved source.
+# No transport method is replaced: Home/API/lock location are the I/O seams.
+PRESERVED_IO_FIXTURE = '''
+_fixture_root = Path(os.environ["MOCK_ROOT"])
+LOCK_ROOT = _fixture_root / "bot-locks"
+_fixture_sleep = time.sleep
+_fixture_time = time
+class _FixtureClock:
+    time = staticmethod(_fixture_time.time)
+    monotonic = staticmethod(_fixture_time.monotonic)
+    sleep = staticmethod(lambda _: None)
+time = _FixtureClock()
+class _FixtureHome(Home):
+    def approval(self):
+        return dict(enabled=True, home=str(self.path), bot_id=123, user_id=456, chat_id=456, since=1)
+    def token(self):
+        return "123:" + "x" * 30
+    def inbox(self, *args, text=None):
+        if args[0] == "receipts":
+            return {"replies": [], "reply_cursor": ""}
+        assert args[0] == "note"
+        request = args[args.index("--request-id") + 1]
+        with (_fixture_root / "notes").open("a") as stream:
+            stream.write("synthetic-note\\n")
+        return {"id": "fixture-note", "request_id": request, "saved": True, "announced": True}
+Home = _FixtureHome
+class _FixtureAPI:
+    def __init__(self, _): self.polls = 0
+    def call(self, method, **payload):
+        with (_fixture_root / "api-calls").open("a") as stream:
+            stream.write(method + "\\n")
+        case = os.environ["MOCK_CASE"]
+        if method == "getMe": return {"id": 123, "is_bot": True}
+        if method == "getWebhookInfo": return {"url": ""}
+        if method == "getChat": return {"id": 456, "type": "private"}
+        if method == "getUpdates":
+            if case == "idle_crash": os.kill(os.getpid(), 9)
+            if case == "idle_wait":
+                (_fixture_root / "child-pid").write_text(str(os.getpid()))
+                _fixture_sleep(10)
+            self.polls += 1
+            if case == "ready_send" and self.polls > 1: raise APIError(0)
+            if case == "receive":
+                if self.polls > 1: raise APIError(0)
+                if payload.get("offset", 0) > 2: return []
+                return [{"update_id": 2, "message": {
+                    "from": {"id": 456, "is_bot": False},
+                    "chat": {"id": 456, "type": "private"},
+                    "message_id": 2, "date": int(time.time()), "text": "synthetic lead"}}]
+            return []
+        if method == "sendMessage":
+            if case == "send_crash": os.kill(os.getpid(), 9)
+            if case == "ready_send":
+                return {"chat": {"id": 456, "type": "private"},
+                        "from": {"id": 123, "is_bot": True}, "message_id": 77}
+            raise AssertionError("unexpected send after recovery")
+        raise AssertionError("unexpected mock method")
+API = _FixtureAPI
+'''
+
+
 class ReceiverTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="telegram-receiver-test-")
@@ -77,7 +138,8 @@ class ReceiverTests(unittest.TestCase):
 
     def invoke(self, case="network", vault="ok"):
         env = {**os.environ, "MOCK_CASE": case, "MOCK_VAULT": vault,
-               "MOCK_CALLS": str(self.calls), "FM_TELEGRAM_BOT_TOKEN": "MUST_BE_REMOVED"}
+               "MOCK_ROOT": str(self.root), "MOCK_CALLS": str(self.calls),
+               "FM_TELEGRAM_BOT_TOKEN": "MUST_BE_REMOVED"}
         result = subprocess.run([sys.executable, str(self.runner), "run", "--home", str(self.home),
                                  "--transport", str(self.transport), "--av", str(self.av)],
                                 env=env, capture_output=True, timeout=5)
@@ -86,6 +148,110 @@ class ReceiverTests(unittest.TestCase):
 
     def last(self):
         return json.loads((self.folder / "last-stop.json").read_text())
+
+    def prepare_preserved_source(self):
+        # Retain the original source bytes as the prefix; append only fake I/O.
+        source = receiver.checked_source(Path(os.environ["TELEGRAM_TRANSPORT_SOURCE"]))
+        fixture = source + PRESERVED_IO_FIXTURE.encode()
+        self.transport.write_bytes(fixture)
+        self.runner.write_text(SOURCE.read_text().replace(receiver.TRANSPORT_SHA256,
+                               hashlib.sha256(fixture).hexdigest()))
+
+    @unittest.skipUnless(os.environ.get("TELEGRAM_TRANSPORT_SOURCE"), "optional preserved-source restart")
+    def test_source_idle_crash_restarts_and_captures_without_manual_rearm(self):
+        import sqlite3
+        self.prepare_preserved_source()
+        self.invoke("idle_crash")
+        self.assertEqual(self.last()["reason"], "process_interrupted")
+        self.assertTrue(self.last()["automatic_retry"])
+        self.assertFalse((self.folder / "halt.json").exists())
+        self.invoke("receive")
+        self.assertEqual(self.last()["reason"], "network_unavailable")
+        self.invoke("receive")
+        with sqlite3.connect(self.home / "state" / "telegram" / "transport.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM inbound").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT value FROM meta WHERE key='offset'").fetchone()[0], "3")
+        self.assertEqual((self.root / "notes").read_text().splitlines(), ["synthetic-note"])
+        self.assertFalse((self.folder / "halt.json").exists())
+
+    @unittest.skipUnless(os.environ.get("TELEGRAM_TRANSPORT_SOURCE"), "optional preserved-source restart")
+    def test_source_send_crash_recovery_halts_without_second_send(self):
+        import sqlite3
+        self.prepare_preserved_source()
+        self.invoke("idle_crash")  # initialize only a synthetic journal, then die before sending
+        journal = self.home / "state" / "telegram" / "transport.sqlite3"
+        with sqlite3.connect(journal) as db:
+            db.execute("INSERT INTO inbound VALUES (1,'original-note','original-request',1)")
+            db.execute("INSERT INTO delivery (note,kind,body) VALUES ('original-note','reply','synthetic')")
+        self.invoke("send_crash")
+        self.assertEqual(self.last()["reason"], "process_interrupted")
+        self.assertTrue(self.last()["automatic_retry"])
+        with sqlite3.connect(journal) as db:
+            self.assertEqual(db.execute("SELECT state FROM delivery").fetchone()[0], "sending")
+        self.invoke("recover_send")
+        self.assertEqual(self.last()["reason"], "delivery_requires_review")
+        self.assertFalse(self.last()["automatic_retry"])
+        with sqlite3.connect(journal) as db:
+            self.assertEqual(db.execute("SELECT state FROM delivery").fetchone()[0], "uncertain")
+        self.assertEqual((self.root / "api-calls").read_text().splitlines().count("sendMessage"), 1)
+        before = self.calls.read_text()
+        self.invoke("receive")
+        self.assertEqual(self.calls.read_text(), before)
+        self.assertTrue((self.folder / "halt.json").exists())
+
+    @unittest.skipUnless(os.environ.get("TELEGRAM_TRANSPORT_SOURCE"), "optional preserved-source restart")
+    def test_source_ready_reply_resumes_and_confirmed_sent_never_resends(self):
+        import sqlite3
+        self.prepare_preserved_source()
+        self.invoke("idle_crash")
+        journal = self.home / "state" / "telegram" / "transport.sqlite3"
+        with sqlite3.connect(journal) as db:
+            db.execute("INSERT INTO inbound VALUES (1,'original-note','original-request',1)")
+            db.execute("INSERT INTO delivery (note,kind,body) VALUES ('original-note','reply','synthetic')")
+        self.invoke("ready_send")
+        self.assertTrue(self.last()["automatic_retry"])
+        self.assertFalse((self.folder / "halt.json").exists())
+        with sqlite3.connect(journal) as db:
+            self.assertEqual(db.execute("SELECT state,body FROM delivery").fetchone(), ("sent", ""))
+        self.invoke("ready_send")
+        self.assertEqual((self.root / "api-calls").read_text().splitlines().count("sendMessage"), 1)
+        self.assertFalse((self.folder / "halt.json").exists())
+
+    @unittest.skipUnless(os.environ.get("TELEGRAM_TRANSPORT_SOURCE"), "optional preserved-source restart")
+    def test_source_supervisor_crash_then_fresh_login_resumes_safe_journal(self):
+        import time
+        self.prepare_preserved_source()
+        env = {**os.environ, "MOCK_CASE": "idle_wait", "MOCK_ROOT": str(self.root),
+               "MOCK_CALLS": str(self.calls)}
+        proc = subprocess.Popen([sys.executable, str(self.runner), "run", "--home", str(self.home),
+                                 "--transport", str(self.transport), "--av", str(self.av)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        child_pid = None
+        try:
+            until = time.monotonic() + 3
+            child_record = self.root / "child-pid"
+            while not child_record.exists() and time.monotonic() < until:
+                time.sleep(0.01)
+            self.assertTrue(child_record.exists())
+            child_pid = int(child_record.read_text())
+            proc.kill()
+            # Simulate launchd's owned-process-group cleanup, not a live service action.
+            os.killpg(child_pid, signal.SIGKILL)
+            proc.communicate(timeout=3)
+            self.assertTrue((self.folder / "attempt.json").exists())
+            self.assertFalse((self.folder / "halt.json").exists())
+            self.invoke("receive")
+            self.assertEqual((self.root / "notes").read_text().splitlines(), ["synthetic-note"])
+            self.assertFalse((self.folder / "attempt.json").exists())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            if child_pid is not None:
+                try:
+                    os.killpg(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            proc.communicate(timeout=3)
 
     def test_network_retries_without_latch(self):
         self.invoke()
@@ -106,8 +272,7 @@ class ReceiverTests(unittest.TestCase):
         for case, reason in (("auth", "authentication_or_ownership"), ("owner", "local_consumer"),
                              ("webhook", "webhook"), ("uncertain", "delivery_requires_review"),
                              ("rejected", "delivery_requires_review"), ("approval", "approval_changed"),
-                             ("unknown", "transport_requires_review"), ("normal", "unexpected_stop"),
-                             ("crash", "unexpected_stop")):
+                             ("unknown", "transport_requires_review"), ("normal", "unexpected_stop")):
             with self.subTest(case=case):
                 self.invoke(case)
                 self.assertEqual(self.last()["reason"], reason)
@@ -129,9 +294,37 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(self.last()["reason"], "transport_changed")
         self.assertFalse(self.calls.exists())
 
-    def test_crashed_supervisor_marker_never_automatically_rearms(self):
+    def test_existing_hard_stop_never_automatically_rearms(self):
         self.folder.mkdir(parents=True, mode=0o700)
         (self.folder / "halt.json").write_text("incomplete")
+        self.invoke()
+        self.assertFalse(self.calls.exists())
+
+    def test_abrupt_child_death_restarts_without_manual_rearm(self):
+        self.invoke("crash")
+        self.assertEqual(self.last()["reason"], "process_interrupted")
+        self.assertTrue(self.last()["automatic_retry"])
+        self.assertFalse((self.folder / "halt.json").exists())
+        self.invoke()
+        self.assertEqual(self.last()["reason"], "network_unavailable")
+        self.assertEqual(len(self.calls.read_text().splitlines()), 2)
+
+    def test_stale_attempt_after_supervisor_death_does_not_block_login(self):
+        self.folder.mkdir(parents=True, mode=0o700)
+        (self.folder / "attempt.json").write_text("incomplete attempt")
+        self.invoke()
+        self.assertEqual(self.last()["reason"], "network_unavailable")
+        self.assertFalse((self.folder / "halt.json").exists())
+        self.assertFalse((self.folder / "attempt.json").exists())
+
+    def test_child_persists_hard_stop_without_parent_reporting(self):
+        self.folder.mkdir(parents=True, mode=0o700)
+        env = {**os.environ, "FM_TELEGRAM_BOT_TOKEN": "SYNTHETIC", "MOCK_CASE": "auth"}
+        result = subprocess.run([sys.executable, str(self.runner), "_child", "--home", str(self.home),
+                                 "--transport", str(self.transport)], capture_output=True, timeout=5, env=env)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads((self.folder / "halt.json").read_text())["reason"],
+                         "authentication_or_ownership")
         self.invoke()
         self.assertFalse(self.calls.exists())
 
@@ -220,7 +413,7 @@ class ReceiverTests(unittest.TestCase):
                 proc.stdout.close()
                 proc.stderr.close()
 
-    def test_sigterm_preserves_latch_and_ends_owned_child(self):
+    def test_logout_sigterm_ends_owned_child_and_allows_next_login(self):
         self.av.write_text(f"#!{sys.executable}\nimport time\nfrom pathlib import Path\n"
                            f"Path({str(self.calls)!r}).write_text('started')\ntime.sleep(10)\n")
         proc = subprocess.Popen([sys.executable, str(self.runner), "run", "--home", str(self.home),
@@ -234,8 +427,12 @@ class ReceiverTests(unittest.TestCase):
             self.assertTrue(self.calls.exists())
             proc.send_signal(signal.SIGTERM)
             proc.communicate(timeout=3)
-            self.assertEqual(self.last()["reason"], "operator_stop_requires_review")
-            self.assertTrue((self.folder / "halt.json").exists())
+            self.assertEqual(self.last()["reason"], "process_interrupted")
+            self.assertTrue(self.last()["automatic_retry"])
+            self.assertFalse((self.folder / "halt.json").exists())
+            self.av.write_text(AV_FIXTURE.replace("PYTHON", sys.executable))
+            self.invoke()
+            self.assertEqual(self.last()["reason"], "network_unavailable")
         finally:
             if proc.poll() is None:
                 proc.kill()
